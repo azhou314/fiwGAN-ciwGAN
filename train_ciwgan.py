@@ -41,21 +41,19 @@ def train(fps, args):
 
   # Make z vector
   def random_c():
-    idxs = np.random.randint(args.num_categ, size=args.train_batch_size)
-    c = np.zeros((args.train_batch_size, args.num_categ))
-    c[np.arange(args.train_batch_size), idxs] = 1
+    c = np.random.randint(args.num_categ, size=args.train_batch_size)
     return c
+
   def random_z():
-    rz = np.zeros([args.train_batch_size, args.wavegan_latent_dim])
-    rz[:, : args.num_categ] = random_c()
-    rz[:, args.num_categ : ] = np.random.uniform(-1., 1., size=(args.train_batch_size, args.wavegan_latent_dim - args.num_categ))        
+    rz = np.random.uniform(-1., 1., size=(args.train_batch_size, args.wavegan_latent_dim))
     return rz;
 
   z = tf.placeholder(tf.float32, (args.train_batch_size,  args.wavegan_latent_dim))
+  c = tf.placeholder(tf.float32, (args.train_batch_size))
 
   # Make generator
   with tf.variable_scope('G'):
-    G_z = WaveGANGenerator(z, train=True, **args.wavegan_g_kwargs)
+    G_z = WaveGANGenerator(z, c, train=True, num_categ = args.num_categ, embed_dim=25, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -99,7 +97,7 @@ def train(fps, args):
   print('Total params: {} ({:.2f} MB)'.format(nparams, (float(nparams) * 4) / (1024 * 1024)))
   print('-' * 80)
 
-  
+
 
   # Make fake discriminator
   with tf.name_scope('D_G_z'), tf.variable_scope('D', reuse=True):
@@ -118,7 +116,7 @@ def train(fps, args):
     v_n = reduce(lambda x, y: x * y, v_shape)
     print('{} ({}): {}'.format(v.get_shape().as_list(), v_n, v.name))
   print('-' * 80)
-  
+
   # Create loss
   D_clip_weights = None
   if args.wavegan_loss == 'dcgan':
@@ -162,16 +160,15 @@ def train(fps, args):
       D_clip_weights = tf.group(*clip_ops)
   elif args.wavegan_loss == 'wgan-gp':
 
-    def q_cost_tf(z, q):
-        z_cat = z[:, : args.num_categ]
-        q_cat = q[:, : args.num_categ]
-        lcat = tf.nn.softmax_cross_entropy_with_logits(labels=z_cat, logits=q_cat)
+    def q_cost_tf(c, q):
+        labels = tf.one_hot(tf.cast(c, tf.int32), depth=args.num_categ)
+        lcat = tf.nn.softmax_cross_entropy_with_logits(labels=labels, logits=q)
         return tf.reduce_mean(lcat);
 
-    
+
     G_loss = -tf.reduce_mean(D_G_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
-    Q_loss = q_cost_tf(z, Q_G_z)
+    Q_loss = q_cost_tf(c, Q_G_z)
 
     alpha = tf.random_uniform(shape=[args.train_batch_size, 1, 1], minval=0., maxval=1.)
     differences = G_z - x
@@ -227,7 +224,7 @@ def train(fps, args):
   G_train_op = G_opt.minimize(G_loss, var_list=G_vars,
       global_step=tf.train.get_or_create_global_step())
   D_train_op = D_opt.minimize(D_loss, var_list=D_vars)
-  Q_train_op = Q_opt.minimize(Q_loss, var_list=Q_vars+G_vars)  
+  Q_train_op = Q_opt.minimize(Q_loss, var_list=Q_vars+G_vars)
 
   # Run training
   with tf.train.MonitoredTrainingSession(
@@ -239,15 +236,15 @@ def train(fps, args):
     while True:
       # Train discriminator
       for i in xrange(args.wavegan_disc_nupdates):
-        sess.run([D_loss,D_train_op], feed_dict={z: random_z()})
-        
-        
+        sess.run([D_loss,D_train_op], feed_dict={z: random_z(), c: random_c()})
+
+
         # Enforce Lipschitz constraint for WGAN
         if D_clip_weights is not None:
           sess.run(D_clip_weights)
 
       # Train generator
-      sess.run([G_loss,Q_loss,G_train_op,Q_train_op], feed_dict={z: random_z()})
+      sess.run([G_loss,Q_loss,G_train_op,Q_train_op], feed_dict={z: random_z(), c: random_c()})
 
 
 """
@@ -287,11 +284,12 @@ def infer(args):
 
   # Input zo
   z = tf.placeholder(tf.float32, [None, args.wavegan_latent_dim], name='z')
+  c = tf.placeholder(tf.float32, [None,], name='c')
   flat_pad = tf.placeholder(tf.int32, [], name='flat_pad')
 
   # Execute generator
   with tf.variable_scope('G'):
-    G_z = WaveGANGenerator(z, train=False, **args.wavegan_g_kwargs)
+    G_z = WaveGANGenerator(z, c, train=False, num_categ = args.num_categ, embed_dim=25, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')

@@ -42,6 +42,9 @@ def conv1d_transpose(
 """
 def WaveGANGenerator(
     z,
+    c,
+    num_categ=10,
+    embed_dim=100,
     slice_len=16384,
     nch=1,
     kernel_len=25,
@@ -57,10 +60,11 @@ def WaveGANGenerator(
   else:
     batchnorm = lambda x: x
 
-  # FC and reshape for convolution
-  # [100] -> [16, 1024]
   dim_mul = 16 if slice_len == 16384 else 32
   output = z
+
+  # FC and reshape for convolution
+  # [100] -> [16, 1024]
   with tf.variable_scope('z_project'):
     output = tf.layers.dense(output, 4 * 4 * dim * dim_mul)
     output = tf.reshape(output, [batch_size, 16, dim * dim_mul])
@@ -68,8 +72,17 @@ def WaveGANGenerator(
   output = tf.nn.relu(output)
   dim_mul //= 2
 
+  # Embed class and combine with latent
+  # [16, 1024] -> [16, 1025]
+  with tf.variable_scope('embed'):
+    embed_layer = tf.keras.layers.Embedding(input_dim=num_categ, output_dim=embed_dim)
+    embed = embed_layer(c)
+    embed = tf.layers.dense(embed, 4 * 4)
+    embed = tf.reshape(embed, [batch_size, 16, 1])
+    output = tf.concat([output, embed], axis=2)
+
   # Layer 0
-  # [16, 1024] -> [64, 512]
+  # [16, 1025] -> [64, 512]
   with tf.variable_scope('upconv_0'):
     output = conv1d_transpose(output, dim * dim_mul, kernel_len, 4, upsample=upsample)
     output = batchnorm(output)
