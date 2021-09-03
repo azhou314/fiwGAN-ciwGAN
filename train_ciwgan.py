@@ -53,7 +53,7 @@ def train(fps, args):
 
   # Make generator
   with tf.variable_scope('G'):
-    G_z = WaveGANGenerator(z, c, train=True, num_categ = args.num_categ, embed_dim=25, **args.wavegan_g_kwargs)
+    G_z = WaveGANGenerator(z, c, train=True, num_categ = args.num_categ, embed_dim=args.embed_dim, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -165,10 +165,9 @@ def train(fps, args):
         lcat = tf.nn.softmax_cross_entropy_with_logits(labels=labels, logits=q)
         return tf.reduce_mean(lcat);
 
-
     G_loss = -tf.reduce_mean(D_G_z)
     D_loss = tf.reduce_mean(D_G_z) - tf.reduce_mean(D_x)
-    Q_loss = q_cost_tf(c, Q_G_z)
+    Q_loss = args.q_loss_lambda * q_cost_tf(c, Q_G_z)
 
     alpha = tf.random_uniform(shape=[args.train_batch_size, 1, 1], minval=0., maxval=1.)
     differences = G_z - x
@@ -289,7 +288,7 @@ def infer(args):
 
   # Execute generator
   with tf.variable_scope('G'):
-    G_z = WaveGANGenerator(z, c, train=False, num_categ = args.num_categ, embed_dim=25, **args.wavegan_g_kwargs)
+    G_z = WaveGANGenerator(z, c, train=False, num_categ = args.num_categ, embed_dim=args.embed_dim, **args.wavegan_g_kwargs)
     if args.wavegan_genr_pp:
       with tf.variable_scope('pp_filt'):
         G_z = tf.layers.conv1d(G_z, 1, args.wavegan_genr_pp_len, use_bias=False, padding='same')
@@ -607,6 +606,10 @@ if __name__ == '__main__':
       help='Length of post-processing filter for DCGAN')
   wavegan_args.add_argument('--wavegan_disc_phaseshuffle', type=int,
       help='Radius of phase shuffle operation')
+  wavegan_args.add_argument('--q_loss_lambda', type=float,
+      help='weight of Q loss')
+  wavegan_args.add_argument('--embed_dim', type=float,
+        help='dimension of generator embedding')
 
   train_args = parser.add_argument_group('Train')
   train_args.add_argument('--train_batch_size', type=int,
@@ -652,6 +655,7 @@ if __name__ == '__main__':
     wavegan_genr_pp=False,
     wavegan_genr_pp_len=512,
     wavegan_disc_phaseshuffle=2,
+    q_loss_lambda=1,
     train_batch_size=64,
     train_save_secs=300,
     train_summary_secs=120,
